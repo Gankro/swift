@@ -2449,7 +2449,7 @@ collections = [
 
 % for (Self, a_self, TypeParametersDecl, TypeParameters, AnyTypeParameters, Sequence, AnySequenceType) in collections:
 
-/// Header part of the native storage.
+/// Header part of the RawNativeSelfBuffer.
 internal struct _${Self}StorageHeader {
 
   internal init(capacity: Int) {
@@ -2474,7 +2474,8 @@ internal struct _${Self}StorageHeader {
 /// keys, and values. The data layout starts with the bitmap, followed by the
 /// keys, followed by the values. This is untyped to allow empty
 /// Buffers to be type-punned. Subclasses add type info to provide deinit and 
-/// more interesting NSSelf impls.
+/// more interesting NSSelf impls. The NSSelf impl on this class
+/// is only for empty collections.
 internal class _RawNative${Self}Buffer:
   _SwiftNativeNS${Self}, _NS${Self}Core
 {
@@ -2489,13 +2490,16 @@ internal class _RawNative${Self}Buffer:
     return UnsafeMutablePointer(Builtin.projectTailElems(self, UInt.self))
   }
 
+  /// The empty singleton that is used for every single Dictionary that is
+  /// created without any elements. The contents of the buffer should never
+  /// be mutated.
   internal static let empty: RawBuffer = {
     let buffer = Builtin.allocWithTailElems_1(RawBuffer.self,
         1._builtinWordValue, UInt.self)
     
     // We set the capacity to 1 so that there's an empty hole to search.
-    // Any insertion will reallocate because there always needs to be
-    // an empty hole.
+    // Any insertion will lead to a real buffer being allocated, because 
+    // Dictionary guarantees there's always another empty hole after insertion.
     buffer._body = StorageHeader(capacity: 1)
 
     let initializedEntries = _UnsafeBitMap(
@@ -2503,16 +2507,23 @@ internal class _RawNative${Self}Buffer:
         bitCount: 1)
     initializedEntries.initializeToZero()
 
-    // Initialize header
+    // We don't bother to initalize the pointers in the header because
+    // they should never be accessed on the empty singleton.
     buffer._body.initializedEntries = initializedEntries
     return buffer
   }()
 
   internal init(_doNotCallMe: ()) {
-    _sanityCheckFailure("Only initialize these by calling create")
+    _sanityCheckFailure("Only create this by using the `empty` singleton")
   }
 
 #if _runtime(_ObjC)
+  //
+  // NSSelf implementation, assuming Self is the empty singleton
+  //
+
+  /// Get the NSEnumator implementation for self. NativeSelfBuffer
+  /// overloads this to give NativeSelfNSEnumerator proper type parameters.
   func enumerator() -> _NSEnumerator {
     return _Native${Self}NSEnumerator<${AnyTypeParameters}>(
         _Native${Self}Storage(_buffer: self))
@@ -2532,6 +2543,9 @@ internal class _RawNative${Self}Buffer:
     with state: UnsafeMutablePointer<_SwiftNSFastEnumerationState>,
     objects: UnsafeMutablePointer<AnyObject>?, count: Int
   ) -> Int {
+    // Even though we never do anything in here, we need to update the
+    // state so that people know we actually ran.
+    
     var theState = state.pointee
     if theState.state == 0 {
       theState.state = 1 // Arbitrary non-zero value.
@@ -2580,8 +2594,6 @@ internal class _RawNative${Self}Buffer:
     return enumerator()
   }
 
-  // We also override the following methods for efficiency.
-
   func getObjects(_ objects: UnsafeMutablePointer<AnyObject>?,
     andKeys keys: UnsafeMutablePointer<AnyObject>?) {
     // Do nothing, we're empty
@@ -2592,8 +2604,14 @@ internal class _RawNative${Self}Buffer:
 }
 
 /// Adds types to a RawNativeBuffer, so that deinit can be implemented.
-/// Doesn't requires Hashable so that it can be instantiated with AnyHashable
-/// in _SwiftDeferredNSSelf for the bridged buffer.
+/// Doesn't requires Hashable so that it can be instantiated with AnyObject
+/// in SwiftDeferredNSSelf for the bridged buffer.
+///
+/// This should in theory be merged with NativeSelfBuffer by removing the
+/// `Key: Hashable` bound on it. We can't (currently?) do this because 
+/// NativeSelfBuffer needs to provide a proper NSSelf implementation, which
+/// requires Hashable. Adding the implementation in a constrained implementation
+/// isn't allowed because they're @objc methods.
 @_versioned
 internal class _TypedNative${Self}Buffer<${TypeParameters}> :
   _RawNative${Self}Buffer {
@@ -2633,7 +2651,7 @@ internal class _TypedNative${Self}Buffer<${TypeParameters}> :
   }
 
   override internal init(_doNotCallMe: ()) {
-    _sanityCheckFailure("Only initialize these by calling create")
+    _sanityCheckFailure("Only create this by calling Storage.createUnhashable")
   }
 
 %if Self == 'Set':
@@ -2653,7 +2671,11 @@ internal class _TypedNative${Self}Buffer<${TypeParameters}> :
 %end
 }
 
-/// Adds the `Key: Hashable` constraint to _NativeTyped
+/// Adds the `Key: Hashable` constraint to NativeTypedSelfBuffer.
+/// This allows it to provide a proper NSSelf implementation, and is therefore
+/// the class that NativeSelfStorage usually instantiates. 
+/// 
+/// See TypedNativeSelfBuffer for more discussion of why this exists.
 @_versioned
 final internal class _Native${Self}Buffer<${TypeParametersDecl}> :
   _TypedNative${Self}Buffer<${TypeParameters}> {
@@ -2662,12 +2684,15 @@ final internal class _Native${Self}Buffer<${TypeParametersDecl}> :
   internal typealias Storage = _Native${Self}Storage<${TypeParameters}>
 
   override internal init(_doNotCallMe: ()) {
-    _sanityCheckFailure("Only initialize these by calling create")
+    _sanityCheckFailure("Only create this by calling Storage.create")
   }
 
-  // NS bridging support
-
+  
 #if _runtime(_ObjC)
+  // NSSelf bridging:
+
+  /// All actual functionality comes from Storage/Dictionary, which are
+  /// just newtype wrappers around a RawNativeSelfBuffer.
   var storage: Storage {
     return Storage(_buffer: self)
   }
@@ -2679,7 +2704,6 @@ final internal class _Native${Self}Buffer<${TypeParametersDecl}> :
   override var count: Int { 
     return full.count 
   }
-
 
   override func enumerator() -> _NSEnumerator {
     return _Native${Self}NSEnumerator<${TypeParameters}>(
@@ -2800,6 +2824,14 @@ final internal class _Native${Self}Buffer<${TypeParametersDecl}> :
 #endif
 }
 
+
+/// This type provides most of the actual functionality for Dictionary,
+/// while just being a wrapper around a RawNativeSelfBuffer.
+///
+/// This type and most of its functionality doesn't require Hashable at all.
+/// The reason for this is to support storing AnyObject for bridging
+/// with SwiftDeferredNSSelf. What functionality actually relies on
+/// Hashable can be found in an extension.
 internal struct _Native${Self}Storage<${TypeParameters}> {
 
   internal typealias StorageHeader = _${Self}StorageHeader
@@ -2816,7 +2848,8 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
   internal typealias SequenceElementWithoutLabels = (Key, Value)
 %end
 
-  /// We store a RawBuffer so that this can be an empty singleton
+  /// See this comments on RawNativeSelfBuffer and its subclasses to
+  /// understand why we store an untyped buffer here.
   internal var _buffer: RawBuffer
 
   /// Creates a Storage with a buffer that is typed, but doesn't understand
@@ -2837,7 +2870,7 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
   }
 
   /// Given a capacity and uninitialized RawBuffer, completes the 
-  /// initialization and produces a full Storage.  
+  /// initialization and produces a properly formed Storage.  
   internal static func create(capacity: Int, buffer: RawBuffer) -> Storage {
     // We can initialize by assignment because _HashedContainerStorageHeader
     // is a trivial type, i.e. contains no references.
@@ -2860,7 +2893,7 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
     return storage
   }
 
-  /// A convenience forwardhing the _buffer's body
+  /// A convenience forwarding the _buffer's body
   internal var _body: StorageHeader { 
     set {
       _buffer._body = newValue
@@ -2870,9 +2903,8 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
     }
   }
 
-  /// The number of _logical elements_ the ${a_self} can store. Not to be
-  /// confused with `capacity`, the total number of raw `UInt8` bytes stored
-  /// by the `ManagedBuffer`.
+  // Forwarding the individual fields of the buffer in various forms
+
   @_versioned
   internal var _capacity: Int {
     return _assumeNonNegative(_body.capacity)
@@ -2897,6 +2929,7 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
     return _buffer._initializedHashtableEntriesBitMapStorage
   }
 
+  // just a convenience for _keys and _values
   internal var _keysRawAddr: Builtin.RawPointer {
     let bitmapAddr = Builtin.projectTailElems(_buffer, UInt.self)
     let numWordsForBitmap = _UnsafeBitMap.sizeInWords(forSizeInBits: _capacity)
@@ -2918,13 +2951,20 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
   }
 %end
 
+  /// Wrap a fully initialized RawBuffer
   init(_buffer: RawBuffer) {
     self._buffer = _buffer
   }
 
+  /// Construct an instance from the empty singleton
   init() {
     self._buffer = RawBuffer.empty
   }
+
+
+
+  // Most of the implementation of the _HashStorage protocol,
+  // but only the parts that don't actually rely on hashing.
 
   @_versioned
   @inline(__always)
@@ -2937,11 +2977,15 @@ internal struct _Native${Self}Storage<${TypeParameters}> {
     return res
   }
 
+  /// Gets the key at the given Index, and then bridges it.
+  /// Intended for use with verbatim bridgeable keys.
   internal func bridgedKey(at index: Index) -> AnyObject {
     let k = key(at: index.offset)
     return _bridgeAnythingToObjectiveC(k)
   }
 
+  /// Gets the key at the given Index, and then bridges it.
+  /// Intended for use with verbatim bridgeable keys.
   internal func bridgedValue(at index: Index) -> AnyObject {
     let v = value(at: index.offset)
     return _bridgeAnythingToObjectiveC(v)
@@ -3355,6 +3399,8 @@ extension _Native${Self}Storage
 }
 
 #if _runtime(_ObjC)
+/// An NSEnumerator that works with any NativeSelfStorage of
+/// verbatim bridgeable elements. Used by the various NSSelf impls.
 final internal class _Native${Self}NSEnumerator<${TypeParameters}>
   : _SwiftNativeNSEnumerator, _NSEnumerator {
 
@@ -3424,8 +3470,10 @@ final internal class _Native${Self}NSEnumerator<${TypeParameters}>
 
 #if _runtime(_ObjC)
 /// This class exists for Objective-C bridging. It holds a reference to a
-/// `_Native${Self}Storage`, and can be upcast to `NS${Self}` when
-/// bridging is necessary.
+/// NativeSelfStorage, and can be upcast to NSSelf when bridging is necessary.
+/// This is the fallback implementation for situations where toll-free bridging
+/// isn't possible. On first access, a NativeSelfStorage of AnyObject will be
+/// constructed containing all the bridged elements.
 final internal class _SwiftDeferredNS${Self}<${TypeParametersDecl}>
   : _SwiftNativeNS${Self}, _NS${Self}Core {
 
@@ -3449,12 +3497,13 @@ final internal class _SwiftDeferredNS${Self}<${TypeParametersDecl}>
     super.init()
   }
 
-  // This stored property should be stored at offset zero.  We perform atomic
-  // operations on it.
-  //
-  // Do not access this property directly.
+  /// This stored property should be stored at offset zero.  We perform atomic
+  /// operations on it.
+  ///
+  /// Do not access this property directly.
   internal var _heapBufferBridged_DoNotUse: AnyObject?
 
+  /// The unbridged elements.
   internal var nativeStorage: NativeStorage
 
   @objc(copyWithZone:)
@@ -3635,10 +3684,6 @@ final internal class _SwiftDeferredNS${Self}<${TypeParametersDecl}>
 
 %end
 
-  //
-  // ${Self} -> NS${Self} bridging
-  //
-
   @objc
   internal var count: Int {
     return nativeStorage._count
@@ -3690,6 +3735,7 @@ final internal class _SwiftDeferredNS${Self}<${TypeParametersDecl}>
     let endIndex = nativeStorage.endIndex
     var stored = 0
 
+    // Only need to bridge once, so we can hoist it out of the loop.
     if (currIndex != endIndex) {
       bridgeEverything()
     }
