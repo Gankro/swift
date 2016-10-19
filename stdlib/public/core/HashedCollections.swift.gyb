@@ -36,12 +36,15 @@ import SwiftShims
 // Currently native storage uses a data structure like this::
 //
 //   Dictionary<K,V> (a struct)
-//   +----------------------------------------------+
-//   | [ _VariantDictionaryStorage<K,V> (an enum) ] |
-//   +---|------------------------------------------+
-//      /
-//     |
-//     V  _NativeDictionaryStorage<K,V> (a class)
+//   +------------------------------------------------+
+//   |  _VariantDictionaryStorage<K,V> (an enum)      |
+//   | +--------------------------------------------+ |
+//   | | [_NativeDictionaryStorage<K,V> (a struct)] | |
+//   | +---|----------------------------------------+ |
+//   +----/-------------------------------------------+
+//       /
+//      |
+//      V  _RawDictionaryBuffer (a class)  
 //   +-----------------------------------------------------------+
 //   | +-------------------------------------------------------+ |
 //   | |_DictionaryStorageHeader<K,V> (a struct)               | |
@@ -120,18 +123,29 @@ import SwiftShims
 // ---------------------------------------
 //
 // `Dictionary<K, V>` bridges to `NSDictionary` iff both `K` and `V` are
-// bridged.  Otherwise, a runtime error is raised. Because 
-// _NativeDictionaryStorage inherits from ManagedBuffer, it can't also
-// inherit from NSDictionary (_NSDictionaryCore). To have a value that does,
-// we wrap the _NativeDictionaryStorage in another class, 
-// _NativeDictionaryBridgingStorage, which incurs an allocation, but is O(1).
+// bridged.  Otherwise, a runtime error is raised. This bridging is always
+// O(1), but may incur an allocation depending on the following conditions:
 //
-// * if both `K` and `V` are bridged verbatim, then access to elements 
-//   does not cause memory allocation.
+// * if both `K` and `V` are bridged verbatim, then `Dictionary<K, V>` is 
+//   toll-free bridged to NSDictionary by returning its 
+//   `_RawNativeDictionaryBuffer`.  However most of the actual implementation 
+//   of `NSDictionary` comes from the `_NativeDictionaryBuffer<K, V>`, which is 
+//   the type most `_RawNativeDictionaryBuffer`s have.
 //
-// * otherwise, `K` and/or `V` are unconditionally or conditionally bridged.
+// * regardless of if `K` and `V` are bridged verbatim, if the Dictionary is
+//   freshly allocated without any elements, then it contains the empty
+//   singleton `_RawNativeDictionaryBuffer` which is also toll-free bridged. 
+//   This uses the `NSDictionary` implementation provided by 
+//   `_RawNativeDictionaryBuffer`, which always yields nothing.
+//
+// * otherwise, `K` and/or `V` are unconditionally or conditionally bridged
+//   by inserting the Storage in a `_SwiftDeferredNSDictionary<K, V>`.
 //   Complete bridging is performed when the first access to elements happens. 
-//   The bridged `NSDictionary` has a cache of pointers it returned, so that:
+//   This is done by constructing a 
+//   `_NativeDictionaryStorage<AnyObject, AnyObject>` containing a
+//   `_TypedNativeBuffer<AnyObject, AnyObject>`. Since AnyObject isn't
+//   Hashable, lookups are done by bridging keys to `K` and looking up the
+//   the index of the key in the native storage. This design ensures that:
 //   - Every time keys or values are accessed on the bridged `NSDictionary`,
 //     new objects are not created.
 //   - Accessing the same element (key or value) multiple times will return
