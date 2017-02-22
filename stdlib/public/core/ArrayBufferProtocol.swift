@@ -13,21 +13,21 @@
 
 // FIXME: these should all be internal, not public. Needs to be public to use in String prototype.
 
-public protocol _PointerFunction {
+internal protocol _PointerFunction {
   associatedtype Element
   func call(_: UnsafeMutablePointer<Element>, count: Int)
 }
 
-public struct _IgnorePointer<T> : _PointerFunction {
-  public func call(_: UnsafeMutablePointer<T>, count: Int) {
+internal struct _IgnorePointer<T> : _PointerFunction {
+  internal func call(_: UnsafeMutablePointer<T>, count: Int) {
     _sanityCheck(count == 0)
   }
 }
 
-public struct _InitializeMemoryFromCollection<
+internal struct _InitializeMemoryFromCollection<
   C: Collection
 > : _PointerFunction {
-  public func call(_ rawMemory: UnsafeMutablePointer<C.Iterator.Element>, count: Int) {
+  internal func call(_ rawMemory: UnsafeMutablePointer<C.Iterator.Element>, count: Int) {
     var p = rawMemory
     var q = newValues.startIndex
     for _ in 0..<count {
@@ -47,8 +47,8 @@ public struct _InitializeMemoryFromCollection<
 
 // Just a quick little thing to abstract over _ContiguousArrayBuffer 
 // and String's native buffer
-// @_versioned
-public protocol _ContiguousBufferProtocol {
+@_versioned
+internal protocol _ContiguousBufferProtocol {
   associatedtype Element
 
   var count: Int { get nonmutating set }
@@ -61,8 +61,8 @@ extension _ContiguousArrayBuffer: _ContiguousBufferProtocol { }
 
 /// The underlying buffer for an ArrayType conforms to
 /// `_ArrayBufferProtocol`.  This buffer does not provide value semantics.
-// @_versioned
-public protocol _ArrayBufferProtocol
+@_versioned
+internal protocol _ArrayBufferProtocol
   : MutableCollection, RandomAccessCollection {
 
   associatedtype Indices : RandomAccessCollection = CountableRange<Int>
@@ -185,12 +185,13 @@ extension _ArrayBufferProtocol
   where Buffer.Element == Element
 {
 
-  // @_versioned
-  public var subscriptBaseAddress: UnsafeMutablePointer<Element> {
+  @_versioned
+  internal var subscriptBaseAddress: UnsafeMutablePointer<Element> {
     return firstElementAddress
   }
 
-  public mutating func replaceSubrange<C>(
+  @_versioned
+  internal mutating func replaceSubrange<C>(
     _ subrange: Range<Int>,
     with newValues: C
   ) where C : Collection, C.Iterator.Element == Element {
@@ -212,7 +213,8 @@ extension _ArrayBufferProtocol
   }
 
   @inline(never)
-  public mutating func replaceSubrangeInPlace<C>(
+  @_versioned
+  internal mutating func replaceSubrangeInPlace<C>(
     _ subrange: Range<Int>,
     with newValues: C,
     insertCount: Int,
@@ -289,6 +291,7 @@ extension _ArrayBufferProtocol
   }
 
   @inline(never)
+  @_versioned
   internal mutating func _arrayOutOfPlaceReplace<C : Collection>(
     _ bounds: Range<Int>,
     with newValues: C,
@@ -436,9 +439,9 @@ extension _ArrayBufferProtocol
     return Buffer(
       _uninitializedCount: countForBuffer, minimumCapacity: minimumCapacity)
   }
-
-  @_versioned
+  
   @inline(never)
+  @_versioned
   internal mutating func _outlinedMakeUniqueBuffer(bufferCount: Int) {
 
     if _fastPath(
