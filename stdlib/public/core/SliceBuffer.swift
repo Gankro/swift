@@ -73,25 +73,26 @@ internal struct _SliceBuffer<Element>
     return owner
   }
 
-  /// Replace the given subRange with the first newCount elements of
+  /// Replace the given subRange with the first insertCount elements of
   /// the given collection.
   ///
   /// - Precondition: This buffer is backed by a uniquely-referenced
-  ///   `_ContiguousArrayBuffer` and
-  ///   `insertCount <= numericCast(newValues.count)`.
-  internal mutating func replaceSubrange<C>(
+  ///   `_ContiguousArrayBuffer`
+  internal mutating func replaceSubrangeInPlace<C>(
     _ subrange: Range<Int>,
-    with insertCount: Int,
-    elementsOf newValues: C
+    with newValues: C,
+    insertCount: Int,
+    growth: Int
   ) where C : Collection, C.Iterator.Element == Element {
 
+    // Goals: 
+    // * adjust subrange to match native storage
+    // * fix up slice bounds to reflect subrange change
+
     _invariantCheck()
-    _sanityCheck(insertCount <= numericCast(newValues.count))
 
     _sanityCheck(_hasNativeBuffer && isUniquelyReferenced())
 
-    let eraseCount = subrange.count
-    let growth = insertCount - eraseCount
     let oldCount = count
 
     var native = nativeBuffer
@@ -101,10 +102,11 @@ internal struct _SliceBuffer<Element>
 
     let start = subrange.lowerBound - startIndex + hiddenElementCount
     let end = subrange.upperBound - startIndex + hiddenElementCount
-    native.replaceSubrange(
+    native.replaceSubrangeInPlace(
       start..<end,
-      with: insertCount,
-      elementsOf: newValues)
+      with: newValues,
+      insertCount: insertCount,
+      growth: growth)
 
     self.endIndex = self.startIndex + oldCount + growth
 
@@ -155,8 +157,7 @@ internal struct _SliceBuffer<Element>
         if _slowPath(backingCount > myCount + offset) {
           native.replaceSubrange(
             (myCount+offset)..<backingCount,
-            with: 0,
-            elementsOf: EmptyCollection())
+            with: EmptyCollection())
         }
         _invariantCheck()
         return native
