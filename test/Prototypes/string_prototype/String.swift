@@ -226,7 +226,7 @@ extension String : BidirectionalCollection {
 
 extension String {
   internal mutating func isUniquelyReferenced() -> Bool {
-    return _isUnique(&contents)
+    return _isUnique_native(&self)
   }
 
   internal mutating func canMutateInPlace(minimumCapacity: Int) -> Bool {
@@ -245,33 +245,35 @@ extension String : RangeReplaceableCollection {
 
     // TODO: newCharacters as? String; newCharacters as? Substring
 
-    let isUnique = isUniquelyReferenced()
-    
+    let isUnique = _isUnique_native(&self)
+
     switch contents {
     case .canonical(var str):
-      var codeUnits = str.codeUnits
-      _precondition(subrange.lowerBound >= codeUnits.startIndex,
-      "String replace: subrange start is negative")
-      _precondition(subrange.upperBound <= codeUnits.endIndex,
-      "String replace: subrange extends past the end")
+      _precondition(subrange.lowerBound >= str.codeUnits.startIndex,
+        "String replace: subrange start is negative")
+      _precondition(subrange.upperBound <= str.codeUnits.endIndex,
+        "String replace: subrange extends past the end")
 
       let newValues = newCharacters.lazy.flatMap { Swift.String($0).utf16 }
       
-      let oldCount = codeUnits.count
+      let oldCount = str.codeUnits.count
       let eraseCount = subrange.count
       let insertCount = numericCast(newValues.count) as Int
       let growth = insertCount - eraseCount
       let newCount = oldCount + growth
 
-      if _fastPath(codeUnits.capacity >= newCount && isUnique) {
-        codeUnits.replaceSubrangeInPlace(subrange, 
-          with: newValues, insertCount: newCount)
+      if _fastPath(str.codeUnits.capacity >= newCount && isUnique) {
+        str._storage.codeUnits.replaceSubrangeInPlace(subrange, 
+          with: newValues, insertCount: insertCount)
       } else {
-        codeUnits.replaceSubrangeOutOfPlace(subrange, 
-          with: newValues, insertCount: newCount)
+        str._storage.codeUnits.replaceSubrangeOutOfPlace(subrange, 
+          with: newValues, insertCount: insertCount)
       }
-    case .latin1:
-      fatalError("TODO")
+
+      contents = .canonical(str)
+
+    // case .latin1:
+      // fatalError("TODO")
       //let values = newValues.lazy.flatMap { Swift.String($0).utf8 }
     default:
       fatalError("TODO")

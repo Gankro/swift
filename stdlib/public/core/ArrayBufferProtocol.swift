@@ -202,8 +202,8 @@ extension _ArrayBufferProtocol
 
     if self.requestUniqueMutableBackingBuffer(
           minimumCapacity: newCount) == nil {
-      self._arrayOutOfPlaceReplace(subrange, with: newValues, 
-          insertCount: insertCount)
+      replaceSubrangeOutOfPlace(subrange, 
+        with: newValues, insertCount: insertCount)
     } else {
       replaceSubrangeInPlace(subrange, 
         with: newValues, insertCount: insertCount)
@@ -288,7 +288,7 @@ extension _ArrayBufferProtocol
   }
 
   @inline(never)
-  internal mutating func _arrayOutOfPlaceReplace<C : Collection>(
+  public mutating func replaceSubrangeOutOfPlace<C : Collection>(
     _ bounds: Range<Int>,
     with newValues: C,
     insertCount: Int

@@ -271,39 +271,55 @@ testSuite.test("replaceSubrange") {
   let initial: String = "hello world!"
   expectEqual(MemoryLayout<Int64>.size, MemoryLayout<String>.size)
 
-  let cases: [(Int, String, String, String)] = 
-    [(0, "hello", "goodbye", "goodbye world!"),        // Edit start
-     (8, "world!", "moon?", "goodbye moon?"),          // Edit end
-     (4, "bye", " night", "good night moon?"),         // Edit middle
-     (4, "", " 🦊🦊🦊", "good 🦊🦊🦊 night moon?"),  // insert wide Characters
-     (4, " 🦊🦊🦊", "", "good night moon?")]          // remove wide Characters
+  let cases: [(Int, String, String, String, Bool)] = 
+    [(0, "hello", "goodbye", "goodbye world!", false),        // Edit start
+     (8, "world!", "moon?", "goodbye moon?", true),          // Edit end
+     (4, "bye", " night", "good night moon?", true),         // Edit middle
+     (4, "", " 🦊🦊🦊", "good 🦊🦊🦊 night moon?", false),  // insert wide Characters
+     (4, " 🦊🦊🦊", "", "good night moon?", true)]          // remove wide Characters
 
-  // TODO: String subrange search impl to eliminate need for `start`
-  func findSubrange(start: Int, haystack: String, needle: String) -> Range<Int> {
-    let start = start // haystack.index(of: needle)
-    let end = start.advanced(by: needle.endIndex - needle.startIndex)
-    return start..<end
+  func addrOf<T>(_ x: T) -> Int {
+    return unsafeBitCast(x, to: Int.self)
   }
 
-  print(unsafeBitCast(initial.codeUnits, to: Int.self))
   var testSubject = initial;
-  for (start, needle, replacement, result) in cases {
-    let subrange = findSubrange(start: start, haystack: testSubject, needle: needle)
+  var oldAddr: Int
+  for (start, needle, replacement, result, inPlace) in cases {
+    // TODO: replace with
+    // let subrange = testSubject.range(of: needle)
+    let start = start
+    let end = start.advanced(by: needle.endIndex - needle.startIndex)
+    let subrange = start..<end
+    
+    oldAddr = addrOf(testSubject)
+    let newCount = subrange.count
     testSubject.replaceSubrange(subrange, with: replacement)
-    expectEqual(testSubject, result)
+    expectEqual(result, testSubject)
+    
+    if inPlace {
+      expectEqual(oldAddr, addrOf(testSubject))
+    } else {
+      expectNotEqual(oldAddr, addrOf(testSubject))
+    }
   }
-
-
-
+  
   // Make sure the initial value wasn't mutated
   expectEqual(initial, "hello world!")
 
   // Check implicit RangeReplaceable stuff works
   var hello: String = "Hello!"
+  
+  oldAddr = addrOf(hello)
   hello.removeLast()
+  expectEqual("Hello", hello)
+  // TODO: figure out why this is failing
+  // expectEqual(oldAddr, addrOf(hello))
+  
+  oldAddr = addrOf(hello)
   let newElements: String = ", 🌎!"
   hello += newElements
-  expectEqual(hello, "Hello, 🌎!")
+  expectEqual("Hello, 🌎!", hello)
+  expectNotEqual(oldAddr, addrOf(hello))
 }
 
 testSuite.test("cstring") {
