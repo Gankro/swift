@@ -224,25 +224,73 @@ extension String : BidirectionalCollection {
   }
 }
 
+extension String {
+  internal mutating func isUniquelyReferenced() -> Bool {
+    return _isUnique(&contents)
+  }
+
+  internal mutating func canMutateInPlace(minimumCapacity: Int) -> Bool {
+    return _fastPath(isUniquelyReferenced() /* && capacity >= minimumCapacity */)
+  }
+}
+
 extension String : RangeReplaceableCollection {
   typealias SubSequence = Substring
 
   mutating func replaceSubrange<C: Collection>(
-    _ subrange: Range<Int>, with newValues: C
+    _ subrange: Range<Int>, with newCharacters: C
   )
   where C.Iterator.Element == Character
   {
+
+    // TODO: newCharacters as? String; newCharacters as? Substring
+
+    let isUnique = isUniquelyReferenced()
+    
+    switch contents {
+    case .canonical(var str):
+      var codeUnits = str.codeUnits
+      _precondition(subrange.lowerBound >= codeUnits.startIndex,
+      "String replace: subrange start is negative")
+      _precondition(subrange.upperBound <= codeUnits.endIndex,
+      "String replace: subrange extends past the end")
+
+      let newValues = newCharacters.lazy.flatMap { Swift.String($0).utf16 }
+      
+      let oldCount = codeUnits.count
+      let eraseCount = subrange.count
+      let insertCount = numericCast(newValues.count) as Int
+      let growth = insertCount - eraseCount
+      let newCount = oldCount + growth
+
+      if _fastPath(codeUnits.capacity >= newCount && isUnique) {
+        codeUnits.replaceSubrangeInPlace(subrange, 
+          with: newValues, insertCount: newCount)
+      } else {
+        codeUnits.replaceSubrangeOutOfPlace(subrange, 
+          with: newValues, insertCount: newCount)
+      }
+    case .latin1:
+      fatalError("TODO")
+      //let values = newValues.lazy.flatMap { Swift.String($0).utf8 }
+    default:
+      fatalError("TODO")
+    }
+
+    /*
+
     switch contents {
     case .canonical(var str):
       // FIXME: the `str` var is a copy, and not a move, forcing CoW :(
 
       // Squash the stream of characters into utf16 
-      str.replaceSubrange(subrange, with: newValues.lazy.flatMap { Swift.String($0).utf16 })
+      str.replaceSubrange(subrange, with: newCharacters.lazy.flatMap { Swift.String($0).utf16 })
       
       self.contents = .canonical(str)
     default: 
       fatalError("TODO")
     }
+    */
   }
 }
 

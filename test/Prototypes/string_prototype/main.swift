@@ -275,12 +275,13 @@ testSuite.test("replaceSubrange") {
     [(0, "hello", "goodbye", "goodbye world!"),        // Edit start
      (8, "world!", "moon?", "goodbye moon?"),          // Edit end
      (4, "bye", " night", "good night moon?"),         // Edit middle
-     (4, "", " 🦊🦊🦊", "good 🦊🦊🦊 night moon?")]  // wide Characters
+     (4, "", " 🦊🦊🦊", "good 🦊🦊🦊 night moon?"),  // insert wide Characters
+     (4, " 🦊🦊🦊", "", "good night moon?")]          // remove wide Characters
 
   // TODO: String subrange search impl to eliminate need for `start`
   func findSubrange(start: Int, haystack: String, needle: String) -> Range<Int> {
     let start = start // haystack.index(of: needle)
-    let end = start.advanced(by: needle.count)
+    let end = start.advanced(by: needle.endIndex - needle.startIndex)
     return start..<end
   }
 
