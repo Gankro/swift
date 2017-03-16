@@ -298,8 +298,6 @@ testSuite.test("replaceSubrange") {
     
     if inPlace {
       expectEqual(oldAddr, addrOf(testSubject))
-    } else {
-      expectNotEqual(oldAddr, addrOf(testSubject))
     }
   }
   
@@ -321,6 +319,39 @@ testSuite.test("replaceSubrange") {
   expectEqual("Hello, 🌎!", hello)
   expectNotEqual(oldAddr, addrOf(hello))
 }
+
+
+testSuite.test("print leaks") {
+  func getCountData<T>(_ x: inout T) -> (addr: Int, weakCount: Int32, strongCount: Int32, isUnique: Bool) {
+    let addr = unsafeBitCast(x, to: Int.self)
+    let (_, weakCount, extraStrongCount) = UnsafePointer<(Int64, Int32, Int32)>(bitPattern: addr)!.pointee
+    return (addr: addr, weakCount: weakCount, strongCount: (extraStrongCount >> 1) + 1, isUnique: _isUnique_native(&x))
+  }
+
+  func mockPrint(_ x: Any...) { 
+    // let temp = String(x)
+    // print(x)
+  }
+
+  // Prototype String
+  var x: String = "Hello"
+  
+  let (addr1, weakCount1, strongCount1, isUnique1) = getCountData(&x)
+  expectEqual(true, isUnique1)
+  expectEqual(2, weakCount1)
+  expectEqual(1, strongCount1)
+  
+  // print(x)
+  mockPrint(x)
+  
+  let (addr2, weakCount2, strongCount2, isUnique2) = getCountData(&x)
+  expectEqual(true, isUnique2)
+  expectEqual(2, weakCount2)
+  expectEqual(1, strongCount2)
+
+  expectEqual(addr1, addr2)
+}
+
 
 testSuite.test("cstring") {
   let s1: String = "abracadabra"
